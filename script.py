@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from telethon import TelegramClient, functions, errors
+from telethon.tl.types import InputMessagesFilterEmpty
 import asyncio
 import pytz
 import json
@@ -34,10 +35,25 @@ SHEET_CONFIGS = {
     },
     "chat_topics_hourly": {
         "key_columns": ["chat_id", "topic_id", "hour"],
-        "merge_columns": ["chat_name", "topic_name", "message_count"],
+        "merge_columns": [
+            "chat_name",
+            "topic_name",
+            "message_count",
+            "first_message_id",
+            "last_message_id",
+        ],
         "timestamp_column": "processed_at",
     },
 }
+
+
+class DateFilter(InputMessagesFilterEmpty):
+    def __init__(self, start_date, end_date):
+        self.start_date = start_date
+        self.end_date = end_date
+
+    def filter(self, message):
+        return self.start_date <= message.date <= self.end_date
 
 
 class SheetStorage:
@@ -121,6 +137,11 @@ class Config:
             self.start_date = datetime.strptime(os.getenv("START_DATE"), "%Y-%m-%d")
             self.end_date = datetime.strptime(os.getenv("END_DATE"), "%Y-%m-%d")
 
+    def get_date_range(self):
+        if self.mode == "backfill":
+            return self.start_date, self.end_date
+        return None, None
+
 
 def clean_text(text):
     """Clean text for word cloud"""
@@ -155,28 +176,56 @@ def mask_channel_link(link):
     return link
 
 
-async def get_chat_stats(client, chat_id, timezone):
-    """Get stats for a forum chat including topics and user activity"""
+async def get_messages_by_hour(
+    client, chat, topic_id, timezone, start_date=None, end_date=None
+):
+    messages_by_hour = {}
+    total_messages = 0
+    message_filter = DateFilter(start_date, end_date) if start_date else None
+
+    logger.info(f"Starting messages collection for topic {topic_id}")
+    async for message in client.iter_messages(
+        chat, reply_to=topic_id, reverse=True, filter=message_filter
+    ):
+        total_messages += 1
+        if total_messages % 1000 == 0:
+            logger.info(f"Processed {total_messages} messages for topic {topic_id}")
+
+        msg_date = message.date.astimezone(timezone)
+        hour = msg_date.replace(minute=0, second=0, microsecond=0)
+        hour_str = hour.strftime("%Y-%m-%dT%H:%M:%S")
+
+        if hour_str not in messages_by_hour:
+            messages_by_hour[hour_str] = {
+                "count": 0,
+                "first_id": message.id,
+                "last_id": message.id,
+                "hour": hour,
+            }
+        current = messages_by_hour[hour_str]
+        current["count"] += 1
+        current["last_id"] = max(current["last_id"], message.id)
+        current["first_id"] = min(current["first_id"], message.id)
+
+    logger.info(f"Completed topic {topic_id} with {total_messages} messages")
+    return messages_by_hour
+
+
+async def get_chat_stats(client, chat_id, timezone, start_date=None, end_date=None):
     max_retries = 3
     for retry in range(max_retries):
         try:
             masked_id = mask_channel_link(chat_id)
-            logger.info(f"Processing chat: {masked_id} ...")
             chat = await client.get_entity(chat_id)
+            logger.info(f"Processing chat: {chat.title} ...")
             stats = {
                 "chat_id": masked_id,
                 "chat_name": chat.title,
                 "timestamp": datetime.now(timezone),
                 "topics": {},
-                "total_messages": 0,
             }
 
-            # Get total messages
-            async for message in client.iter_messages(chat, limit=1):
-                stats["total_messages"] = message.id
-
             try:
-                # Get forum topics
                 result = await client(
                     functions.channels.GetForumTopicsRequest(
                         channel=chat,
@@ -187,31 +236,27 @@ async def get_chat_stats(client, chat_id, timezone):
                     )
                 )
 
-                logger.info(f"Processing {len(result.topics)} topics ...")
                 for topic in tqdm(result.topics, desc="Processing topics"):
-                    topic_id = topic.id
-                    topic_messages = await client.get_messages(
-                        chat, limit=0, reply_to=topic_id
+                    messages = await get_messages_by_hour(
+                        client, chat, topic.id, timezone, start_date, end_date
                     )
-
-                    stats["topics"][topic_id] = {
-                        "message_count": topic_messages.total,
+                    stats["topics"][topic.id] = {
                         "title": topic.title,
-                        "top_id": topic.id,
+                        "messages": messages,
                     }
                     await asyncio.sleep(1)
+
+                return stats
 
             except Exception as e:
                 logger.error(f"Error getting topics for {masked_id}: {e}")
                 stats["topics_error"] = str(e)
-
-            return stats
+                return None
 
         except errors.FloodWaitError as e:
             if retry == max_retries - 1:
                 raise
             await asyncio.sleep(e.seconds)
-            continue
         except Exception as e:
             logger.error(f"Error getting chat stats for {masked_id}: {e}")
             return None
@@ -244,7 +289,9 @@ async def get_channel_stats(client, channel_id, timezone):
                 if message.text:
                     messages.append(
                         {
-                            "date": message.date.astimezone(timezone),
+                            "date": message.date.astimezone(timezone).strftime(
+                                "%Y-%m-%dT%H:%M:%S"
+                            ),
                             "text": message.text,
                             "processed_text": clean_text(message.text),
                             "message_id": message.id,
@@ -286,38 +333,45 @@ async def get_channel_names(client, channel_list):
 
 
 async def print_welcome_msg(config):
-    # Get channel names first
-    logger.info("Collecting channel and chat names...")
-    async with TelegramClient("anon", config.api_id, config.api_hash) as client:
-        channel_names = await get_channel_names(client, config.channels["channels"])
-        chat_names = await get_channel_names(client, config.channels["chats"])
+    try:
+        logger.info("Collecting channel and chat names...")
+        async with TelegramClient("anon", config.api_id, config.api_hash) as client:
+            # Add timeouts
+            channel_names = await asyncio.wait_for(
+                get_channel_names(client, config.channels["channels"]), timeout=30
+            )
+            chat_names = await asyncio.wait_for(
+                get_channel_names(client, config.channels["chats"]), timeout=30
+            )
 
-    # Welcome message
-    print("\nThanks for using rzv_de private telegram stats bot!")
-    print("\nProcessing channels:")
-    for name in channel_names.values():
-        print(f"- {name}")
-    print("\nProcessing chats:")
-    for name in chat_names.values():
-        print(f"- {name}")
+        print("\nrzv_de telegram stats bot")
+        print("\nChannels:")
+        for name in channel_names.values():
+            print(f"- {name}")
+        print("\nChats:")
+        for name in chat_names.values():
+            print(f"- {name}")
 
-    print("\nCurrent config (safe to print part):")
-    safe_config = {"timezone": config.timezone.zone, "mode": config.mode}
-    if config.mode == "backfill":
-        safe_config.update(
-            {
-                "start_date": config.start_date.strftime("%Y-%m-%d"),
-                "end_date": config.end_date.strftime("%Y-%m-%d"),
-            }
-        )
-    print(json.dumps(safe_config, indent=2))
+        safe_config = {"timezone": config.timezone.zone, "mode": config.mode}
+        if config.mode == "backfill":
+            safe_config.update(
+                {
+                    "start_date": config.start_date.strftime("%Y-%m-%d"),
+                    "end_date": config.end_date.strftime("%Y-%m-%d"),
+                }
+            )
+        print("\nConfig:", json.dumps(safe_config, indent=2))
 
-    print("\nHave a nice day!\n")
+    except asyncio.TimeoutError:
+        logger.error("Timeout collecting names")
+    except Exception as e:
+        logger.error(f"Error in welcome message: {e}")
 
 
 async def main():
     config = Config()
     PROCESSED_AT = datetime.now(config.timezone)
+    start_date, end_date = config.get_date_range()
 
     await print_welcome_msg(config)
 
@@ -339,7 +393,7 @@ async def main():
             for channel_id in tqdm(
                 config.channels["channels"], desc="Processing channels"
             ):
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
                 stats = await get_channel_stats(client, channel_id, config.timezone)
                 if stats:
                     all_stats["channels"].append(stats)
@@ -347,7 +401,9 @@ async def main():
             # Process chats with progress bar
             for chat_id in tqdm(config.channels["chats"], desc="Processing chats"):
                 await asyncio.sleep(2)
-                stats = await get_chat_stats(client, chat_id, config.timezone)
+                stats = await get_chat_stats(
+                    client, chat_id, config.timezone, start_date, end_date
+                )
                 if stats:
                     all_stats["chats"].append(stats)
 
@@ -390,7 +446,9 @@ async def main():
                             "channel_id": channel["channel_id"],
                             "message_id": msg["message_id"],
                             "word": word,
-                            "date": msg["date"],
+                            "date": datetime.fromisoformat(msg["date"]).strftime(
+                                "%Y-%m-%dT%H:%M:%S"
+                            ),
                             "processed_at": PROCESSED_AT,
                         }
                     )
@@ -401,17 +459,23 @@ async def main():
     chat_topics = []
     for chat in all_stats["chats"]:
         for topic_id, topic_data in chat["topics"].items():
-            chat_topics.append(
-                {
-                    "chat_id": chat["chat_id"],
-                    "chat_name": chat["chat_name"],
-                    "topic_id": topic_id,
-                    "topic_name": topic_data["title"],
-                    "hour": PROCESSED_AT.replace(minute=0, second=0, microsecond=0),
-                    "message_count": topic_data["message_count"],
-                    "processed_at": PROCESSED_AT,
-                }
-            )
+            for hour_str, message_data in topic_data["messages"].items():
+                parsed_hour = datetime.fromisoformat(hour_str).strftime(
+                    "%Y-%m-%dT%H:%M:%S"
+                )
+                chat_topics.append(
+                    {
+                        "chat_id": chat["chat_id"],
+                        "chat_name": chat["chat_name"],
+                        "topic_id": topic_id,
+                        "topic_name": topic_data["title"],
+                        "hour": parsed_hour,
+                        "message_count": message_data["count"],
+                        "first_message_id": message_data["first_id"],
+                        "last_message_id": message_data["last_id"],
+                        "processed_at": PROCESSED_AT,
+                    }
+                )
 
     storage.merge_data(
         "chat_topics_hourly", chat_topics, SHEET_CONFIGS["chat_topics_hourly"]
