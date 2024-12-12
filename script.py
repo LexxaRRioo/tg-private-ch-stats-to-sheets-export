@@ -127,7 +127,7 @@ def clean_text(text):
     # First remove URLs
     text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
     # Remove all special chars, including those at word boundaries
-    text = re.sub(r"[-*?()\"'\+;:`<>\[\]%\(\)]+|[?!]+$", " ", text)
+    text = re.sub(r"[-*?()\"'\+;\.\,:`<>\#\[\]%\(\)]+|[?!]+$", " ", text)
     # Normalize spaces
     text = re.sub(r"\s+", " ", text)
     return text.strip().lower()
@@ -265,10 +265,10 @@ async def get_channel_stats(client, channel_id, timezone):
 
 
 async def get_channel_names(client, channel_list):
-    max_retries = 3
     names = {}
-    for retry in range(max_retries):
-        for channel_id in channel_list:
+    for channel_id in channel_list:
+        max_retries = 3
+        for retry in range(max_retries):
             try:
                 entity = await client.get_entity(channel_id)
                 names[channel_id] = entity.title
