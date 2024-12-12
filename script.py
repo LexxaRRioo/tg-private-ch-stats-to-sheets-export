@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from telethon import TelegramClient, functions
+from telethon import TelegramClient, functions, errors
 import asyncio
 import pytz
 import json
@@ -28,8 +28,8 @@ SHEET_CONFIGS = {
         "timestamp_column": "processed_at",
     },
     "channel_messages": {
-        "key_columns": ["channel_id", "message_id"],
-        "merge_columns": ["text", "processed_text", "date"],
+        "key_columns": ["channel_id", "message_id", "word"],
+        "merge_columns": ["date"],
         "timestamp_column": "processed_at",
     },
     "chat_topics_hourly": {
@@ -124,8 +124,11 @@ class Config:
 
 def clean_text(text):
     """Clean text for word cloud"""
+    # First remove URLs
     text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"[,.\n:#]", " ", text)
+    # Remove all special chars, including those at word boundaries
+    text = re.sub(r"[-*?()\"'\+;:`<>\[\]%\(\)]+|[?!]+$", " ", text)
+    # Normalize spaces
     text = re.sub(r"\s+", " ", text)
     return text.strip().lower()
 
@@ -154,103 +157,131 @@ def mask_channel_link(link):
 
 async def get_chat_stats(client, chat_id, timezone):
     """Get stats for a forum chat including topics and user activity"""
-    try:
-        masked_id = mask_channel_link(chat_id)
-        logger.info(f"Processing chat: {masked_id} ...")
-        chat = await client.get_entity(chat_id)
-        stats = {
-            "chat_id": masked_id,
-            "chat_name": chat.title,
-            "timestamp": datetime.now(timezone),
-            "topics": {},
-            "total_messages": 0,
-        }
-
-        # Get total messages
-        async for message in client.iter_messages(chat, limit=1):
-            stats["total_messages"] = message.id
-
+    max_retries = 3
+    for retry in range(max_retries):
         try:
-            # Get forum topics
-            result = await client(
-                functions.channels.GetForumTopicsRequest(
-                    channel=chat, offset_date=0, offset_id=0, offset_topic=0, limit=100
+            masked_id = mask_channel_link(chat_id)
+            logger.info(f"Processing chat: {masked_id} ...")
+            chat = await client.get_entity(chat_id)
+            stats = {
+                "chat_id": masked_id,
+                "chat_name": chat.title,
+                "timestamp": datetime.now(timezone),
+                "topics": {},
+                "total_messages": 0,
+            }
+
+            # Get total messages
+            async for message in client.iter_messages(chat, limit=1):
+                stats["total_messages"] = message.id
+
+            try:
+                # Get forum topics
+                result = await client(
+                    functions.channels.GetForumTopicsRequest(
+                        channel=chat,
+                        offset_date=0,
+                        offset_id=0,
+                        offset_topic=0,
+                        limit=100,
+                    )
                 )
-            )
 
-            logger.info(f"Processing {len(result.topics)} topics ...")
-            for topic in tqdm(result.topics, desc="Processing topics"):
-                topic_id = topic.id
-                topic_messages = await client.get_messages(
-                    chat, limit=0, reply_to=topic_id
-                )
+                logger.info(f"Processing {len(result.topics)} topics ...")
+                for topic in tqdm(result.topics, desc="Processing topics"):
+                    topic_id = topic.id
+                    topic_messages = await client.get_messages(
+                        chat, limit=0, reply_to=topic_id
+                    )
 
-                stats["topics"][topic_id] = {
-                    "message_count": topic_messages.total,
-                    "title": topic.title,
-                    "top_id": topic.id,
-                }
-                await asyncio.sleep(1)
+                    stats["topics"][topic_id] = {
+                        "message_count": topic_messages.total,
+                        "title": topic.title,
+                        "top_id": topic.id,
+                    }
+                    await asyncio.sleep(1)
 
+            except Exception as e:
+                logger.error(f"Error getting topics for {masked_id}: {e}")
+                stats["topics_error"] = str(e)
+
+            return stats
+
+        except errors.FloodWaitError as e:
+            if retry == max_retries - 1:
+                raise
+            await asyncio.sleep(e.seconds)
+            continue
         except Exception as e:
-            logger.error(f"Error getting topics for {masked_id}: {e}")
-            stats["topics_error"] = str(e)
-
-        return stats
-    except Exception as e:
-        logger.error(f"Error getting chat stats for {masked_id}: {e}")
-        return None
+            logger.error(f"Error getting chat stats for {masked_id}: {e}")
+            return None
 
 
 async def get_channel_stats(client, channel_id, timezone):
     """Get channel stats and messages for word cloud"""
-    try:
-        masked_id = mask_channel_link(channel_id)
-        channel = await client.get_entity(channel_id)
-        logger.info(f"Processing channel: {channel.title} ...")
-        stats = {
-            "channel_id": masked_id,
-            "channel_name": channel.title,
-            "timestamp": datetime.now(timezone),
-            "messages": [],
-            "member_count": 0,
-        }
+    max_retries = 3
+    for retry in range(max_retries):
+        try:
+            masked_id = mask_channel_link(channel_id)
+            channel = await client.get_entity(channel_id)
+            logger.info(f"Processing channel: {channel.title} ...")
+            stats = {
+                "channel_id": masked_id,
+                "channel_name": channel.title,
+                "timestamp": datetime.now(timezone),
+                "messages": [],
+                "member_count": 0,
+            }
 
-        participants = await client.get_participants(channel, limit=0)
-        stats["member_count"] = participants.total
+            participants = await client.get_participants(channel, limit=0)
+            stats["member_count"] = participants.total
 
-        # Get recent messages
-        messages = []
-        message_count = 0
+            # Get recent messages
+            messages = []
+            message_count = 0
 
-        async for message in client.iter_messages(channel, limit=100):
-            if message.text:
-                messages.append(
-                    {
-                        "date": message.date.astimezone(timezone),
-                        "text": message.text,
-                        "processed_text": clean_text(message.text),
-                        "message_id": message.id,
-                    }
-                )
-            message_count += 1
+            async for message in client.iter_messages(channel, limit=100):
+                if message.text:
+                    messages.append(
+                        {
+                            "date": message.date.astimezone(timezone),
+                            "text": message.text,
+                            "processed_text": clean_text(message.text),
+                            "message_id": message.id,
+                        }
+                    )
+                message_count += 1
 
-        stats["messages"] = messages
-        return stats
-    except Exception as e:
-        logger.error(f"Error getting channel stats for {masked_id}: {e}")
-        return None
+            stats["messages"] = messages
+            return stats
+        except errors.FloodWaitError as e:
+            if retry == max_retries - 1:
+                raise
+            await asyncio.sleep(e.seconds)
+            continue
+        except Exception as e:
+            logger.error(f"Error getting channel stats for {masked_id}: {e}")
+            return None
 
 
 async def get_channel_names(client, channel_list):
+    max_retries = 3
     names = {}
-    for channel_id in channel_list:
-        try:
-            entity = await client.get_entity(channel_id)
-            names[channel_id] = entity.title
-        except Exception as e:
-            logger.error(f"Error getting name for {mask_channel_link(channel_id)}: {e}")
-            names[channel_id] = channel_id
+    for retry in range(max_retries):
+        for channel_id in channel_list:
+            try:
+                entity = await client.get_entity(channel_id)
+                names[channel_id] = entity.title
+            except errors.FloodWaitError as e:
+                if retry == max_retries - 1:
+                    raise
+                await asyncio.sleep(e.seconds)
+                continue
+            except Exception as e:
+                logger.error(
+                    f"Error getting name for {mask_channel_link(channel_id)}: {e}"
+                )
+                names[channel_id] = mask_channel_link(channel_id)
     return names
 
 
@@ -286,6 +317,7 @@ async def print_welcome_msg(config):
 
 async def main():
     config = Config()
+    PROCESSED_AT = datetime.now(config.timezone)
 
     await print_welcome_msg(config)
 
@@ -335,10 +367,10 @@ async def main():
         {
             "channel_id": c["channel_id"],
             "channel_name": c["channel_name"],
-            "date": datetime.now(config.timezone).date(),
+            "date": PROCESSED_AT.date(),
             "member_count": c["member_count"],
             "messages_count": len(c["messages"]),
-            "processed_at": datetime.now(config.timezone),
+            "processed_at": PROCESSED_AT,
         }
         for c in all_stats["channels"]
     ]
@@ -351,16 +383,17 @@ async def main():
     messages = []
     for channel in all_stats["channels"]:
         for msg in channel["messages"]:
-            messages.append(
-                {
-                    "channel_id": channel["channel_id"],
-                    "message_id": msg["message_id"],
-                    "text": msg["text"],
-                    "processed_text": msg["processed_text"],
-                    "date": msg["date"],
-                    "processed_at": datetime.now(config.timezone),
-                }
-            )
+            if msg["processed_text"]:
+                for word in msg["processed_text"].split():
+                    messages.append(
+                        {
+                            "channel_id": channel["channel_id"],
+                            "message_id": msg["message_id"],
+                            "word": word,
+                            "date": msg["date"],
+                            "processed_at": PROCESSED_AT,
+                        }
+                    )
 
     storage.merge_data("channel_messages", messages, SHEET_CONFIGS["channel_messages"])
 
@@ -374,11 +407,9 @@ async def main():
                     "chat_name": chat["chat_name"],
                     "topic_id": topic_id,
                     "topic_name": topic_data["title"],
-                    "hour": datetime.now(config.timezone).replace(
-                        minute=0, second=0, microsecond=0
-                    ),
+                    "hour": PROCESSED_AT.replace(minute=0, second=0, microsecond=0),
                     "message_count": topic_data["message_count"],
-                    "processed_at": datetime.now(config.timezone),
+                    "processed_at": PROCESSED_AT,
                 }
             )
 
