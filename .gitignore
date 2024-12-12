@@ -1,0 +1,19 @@
+# Environment variables
+.env
+
+# Telethon session file
+*.session
+
+# Google API secrets
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv
+.venv
+
+# IDE specific files
+.idea/
+.vscode/
