@@ -1,0 +1,35 @@
+name: TG Stats Collection
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  collect-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Setup environment
+        run: |
+          echo "TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}" >> .env
+          echo "TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}" >> .env
+          echo "TELEGRAM_CHANNELS=${{ secrets.TELEGRAM_CHANNELS }}" >> .env
+          echo "GOOGLE_SHEET_URL=${{ secrets.GOOGLE_SHEET_URL }}" >> .env
+          echo "TIMEZONE=Europe/Moscow" >> .env
+          echo "MODE=regular" >> .env
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > google_credentials.json
+          echo "GOOGLE_CREDENTIALS_PATH=google_credentials.json" >> .env
+          
+      - name: Run collection
+        run: python -m src.main
