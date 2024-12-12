@@ -2,27 +2,29 @@ import asyncio
 import logging
 import json
 import os
-import pytz
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 from tqdm import tqdm
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from src.config import Config
 from src.telegram.client import get_channel_stats, get_chat_stats, get_channel_names
 from src.sheets.client import SheetStorage
 from src.sheets.config import SHEET_CONFIGS
 from src.cache import load_cache, save_cache
 
-
 ROOT_DIR = Path(__file__).parent.parent
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 async def print_welcome_msg(config):
     try:
         logger.info("Collecting channel and chat names...")
-        async with TelegramClient("anon", config.api_id, config.api_hash) as client:
+        async with TelegramClient(
+            StringSession(os.getenv('TG_SESSION')), 
+            config.api_id, 
+            config.api_hash
+        ) as client:
             channel_names = await asyncio.wait_for(
                 get_channel_names(client, config.channels["channels"]), 
                 timeout=30
@@ -67,7 +69,11 @@ async def main():
         all_stats = cached_data
     else:
         logger.info("Collecting fresh data")
-        async with TelegramClient("anon", config.api_id, config.api_hash) as client:
+        async with TelegramClient(
+            StringSession(os.getenv('TG_SESSION')), 
+            config.api_id, 
+            config.api_hash
+        ) as client:
             all_stats = {
                 "channels": [],
                 "chats": [],
@@ -93,7 +99,6 @@ async def main():
 
     storage = SheetStorage(config.credentials_path, config.sheet_url)
 
-    # Store channels data
     channels_daily = [
         {
             "channel_id": c["channel_id"],
@@ -108,7 +113,6 @@ async def main():
 
     storage.merge_data("channels_daily", channels_daily, SHEET_CONFIGS["channels_daily"])
 
-    # Store messages
     messages = []
     for channel in all_stats["channels"]:
         for msg in channel["messages"]:
@@ -124,7 +128,6 @@ async def main():
 
     storage.merge_data("channel_messages", messages, SHEET_CONFIGS["channel_messages"])
 
-    # Store chat topics hourly data
     chat_topics = []
     for chat in all_stats["chats"]:
         for topic_id, topic_data in chat["topics"].items():
