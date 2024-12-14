@@ -4,16 +4,17 @@ import json
 import os
 import pytz
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from tqdm import tqdm
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from src.config import Config
 from src.telegram.client import get_channel_stats, get_chat_stats, get_channel_names
-from src.telegram.utils import mask_channel_link
 from src.sheets.client import SheetStorage
 from src.sheets.config import SHEET_CONFIGS
 from src.cache import load_cache, save_cache
+from src.telegram.rate_limiter import TelegramManager
+from src.telegram.utils import mask_channel_link
 
 ROOT_DIR = Path(__file__).parent.parent
 logging.basicConfig(
@@ -35,7 +36,7 @@ async def print_welcome_msg(config):
                 get_channel_names(client, config.channels["chats"]), timeout=30
             )
 
-        print("\nWelcome to the rzv_de telegram stats bot!")
+        print("\nrzv_de telegram stats bot")
         print("\nChannels:")
         for name in channel_names.values():
             print(f"- {name}")
@@ -65,14 +66,12 @@ async def main():
     PROCESSED_AT = datetime.now(config.timezone)
     start_date, end_date = config.get_date_range()
 
-    await print_welcome_msg(config)
+    # await print_welcome_msg(config)
     cached_data = load_cache(cache_path)
 
     if cached_data:
         logger.info("Loading from cache")
-        logger.debug(
-            f"Cached data channels count: {len(cached_data.get('channels', []))}"
-        )
+        logger.debug(f"Cache content: {json.dumps(cached_data, indent=2)}")
         all_stats = cached_data
     else:
         logger.info("Collecting fresh data")
@@ -85,81 +84,99 @@ async def main():
                 "timestamp": datetime.now(pytz.UTC),
             }
 
-            progress_bar = tqdm(
-                config.channels["channels"],
-                desc="Channel",
-                bar_format="Processing channel {desc}: {bar} | {percentage:3.0f}% | {n_fmt}/{total_fmt}",
+            manager = TelegramManager(client)
+
+            # Process channels
+            # channel_progress = tqdm(
+            #     config.channels["channels"],
+            #     desc="Channel",
+            #     bar_format="Processing channel '{desc}': {bar} | {percentage:3.0f}% | {n_fmt}/{total_fmt}",
+            #     ncols=100,
+            # )
+
+            # for channel_id in channel_progress:
+            #     try:
+            #         channel = await manager.execute_with_retry(
+            #             client.get_entity, channel_id, entity=channel_id
+            #         )
+            #         channel_progress.set_description_str(channel.title)
+
+            #         stats = await get_channel_stats(client, channel_id, config.timezone)
+            #         if stats:
+            #             all_stats["channels"].append(stats)
+
+            #     except Exception as e:
+            #         logger.error(
+            #             f"Error processing channel {mask_channel_link(channel_id)}: {str(e)}"
+            #         )
+            #         continue
+
+            # Process chats
+            chat_progress = tqdm(
+                config.channels["chats"],
+                desc="Chat",
+                bar_format="Processing chat '{desc}': {bar} | {percentage:3.0f}% | {n_fmt}/{total_fmt}",
                 ncols=100,
             )
 
-            for channel_id in progress_bar:
+            for chat_id in chat_progress:
                 try:
-                    channel = await client.get_entity(channel_id)
-                    # Update tqdm description with current channel name
-                    progress_bar.set_description_str(channel.title)
-
-                    await asyncio.sleep(5)
-                    stats = await get_channel_stats(client, channel_id, config.timezone)
-                    if stats:
-                        all_stats["channels"].append(stats)
-                except Exception as e:
-                    logger.error(
-                        f"Error processing channel {mask_channel_link(channel_id)}: {e}"
+                    chat = await manager.execute_with_retry(
+                        client.get_entity, chat_id, entity=chat_id
                     )
-                    continue
+                    chat_progress.set_description_str(chat.title)
 
-            for chat_id in tqdm(config.channels["chats"], desc="Processing chats"):
-                try:
-                    await asyncio.sleep(2)
                     stats = await get_chat_stats(
                         client, chat_id, config.timezone, start_date, end_date
                     )
                     if stats:
                         all_stats["chats"].append(stats)
+
                 except Exception as e:
                     logger.error(
-                        f"Error processing chat {stats['topic_data']['title']}: {e}"
+                        f"Error processing chat {chat_id}: {str(e)}"
                     )
                     continue
 
+            logger.debug(f"Final all_stats: {json.dumps(all_stats, indent=2)}")
+            logger.info("Data collection completed!\n")
             save_cache(all_stats, cache_path)
 
     storage = SheetStorage(config.credentials_path, config.sheet_url)
 
-    channels_daily = [
-        {
-            "channel_id": c["channel_id"],
-            "channel_name": c["channel_name"],
-            "member_count": c["member_count"],
-            "messages_count": len(c["messages"]),
-            "processed_at": PROCESSED_AT,
-        }
-        for c in all_stats["channels"]
-    ]
-    logger.debug(f"Prepared channels_daily data: {len(channels_daily)} records")
+    # channels_daily = [
+    #     {
+    #         "channel_id": c["channel_id"],
+    #         "channel_name": c["channel_name"],
+    #         "member_count": c["member_count"],
+    #         "messages_count": len(c["messages"]),
+    #         "processed_at": PROCESSED_AT,
+    #     }
+    #     for c in all_stats["channels"]
+    # ]
 
-    storage.merge_data(
-        "channels_daily", channels_daily, SHEET_CONFIGS["channels_daily"]
-    )
+    # storage.merge_data(
+    #     "channels_daily", channels_daily, SHEET_CONFIGS["channels_daily"]
+    # )
 
-    messages = []
-    for channel in all_stats["channels"]:
-        for msg in channel["messages"]:
-            if msg["processed_text"]:
-                for word in msg["processed_text"].split():
-                    messages.append(
-                        {
-                            "channel_id": channel["channel_id"],
-                            "message_id": msg["message_id"],
-                            "word": word,
-                            "date": datetime.fromisoformat(msg["date"]).strftime(
-                                "%Y-%m-%dT%H:%M:%S"
-                            ),
-                            "processed_at": PROCESSED_AT,
-                        }
-                    )
-    logger.debug(f"Prepared channel_messages data: {len(messages)} records")
-    storage.merge_data("channel_messages", messages, SHEET_CONFIGS["channel_messages"])
+    # messages = []
+    # for channel in all_stats["channels"]:
+    #     for msg in channel["messages"]:
+    #         if msg["processed_text"]:
+    #             for word in msg["processed_text"].split():
+    #                 messages.append(
+    #                     {
+    #                         "channel_id": channel["channel_id"],
+    #                         "message_id": msg["message_id"],
+    #                         "word": word,
+    #                         "date": datetime.fromisoformat(msg["date"]).strftime(
+    #                             "%Y-%m-%dT%H:%M:%S"
+    #                         ),
+    #                         "processed_at": PROCESSED_AT,
+    #                     }
+    #                 )
+
+    # storage.merge_data("channel_messages", messages, SHEET_CONFIGS["channel_messages"])
 
     chat_topics = []
     for chat in all_stats["chats"]:
@@ -187,8 +204,8 @@ async def main():
     )
 
     # if os.path.exists(cache_path):
-    # os.remove(cache_path)
-    # logger.info("Cache cleared")
+    #     os.remove(cache_path)
+    #     logger.info("Cache cleared")
 
 
 if __name__ == "__main__":
