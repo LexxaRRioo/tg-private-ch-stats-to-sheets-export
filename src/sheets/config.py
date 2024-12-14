@@ -1,6 +1,6 @@
 SHEET_CONFIGS = {
     "channels_daily": {
-        "key_columns": ["channel_id", "date"],
+        "key_columns": ["channel_id"],
         "merge_columns": ["channel_name", "member_count", "messages_count"],
         "timestamp_column": "processed_at",
     },
@@ -12,12 +12,12 @@ SHEET_CONFIGS = {
     "chat_topics_hourly": {
         "key_columns": ["chat_id", "topic_id", "hour"],
         "merge_columns": [
-            "chat_name", 
-            "topic_name", 
+            "chat_name",
+            "topic_name",
             "message_count",
             "first_message_id",
-            "last_message_id"
+            "last_message_id",
         ],
-        "timestamp_column": "processed_at"
-    }
+        "timestamp_column": "processed_at",
+    },
 }
