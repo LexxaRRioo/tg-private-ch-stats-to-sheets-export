@@ -92,27 +92,32 @@ class SheetStorage:
 
         self.logger.info(f"Successfully updated '{sheet_name}' \n")
 
-    def get_last_message_id(self, chat_id, topic_id):
-        """Get last message ID for specific chat and topic"""
+    def get_last_message_id(self, entity_id, sheet_name="chat_topics_hourly"):
+        """Get last message ID for entity from specified sheet"""
         try:
-            worksheet = self.spreadsheet.worksheet("chat_topics_hourly")
+            worksheet = self.spreadsheet.worksheet(sheet_name)
             df = pd.DataFrame(worksheet.get_all_records())
+            self.logger.info(df.head())
+            self.logger.info(f"entity is: {entity_id}, sheet_name: {sheet_name}")
 
             if df.empty:
                 return None
 
-            # Filter for specific chat and topic
-            mask = (df["chat_id"] == chat_id) & (df["topic_id"] == topic_id)
+            if sheet_name == "channels_daily":
+                mask = df["channel_id"] == entity_id
+            else:
+                mask = df["chat_id"] == entity_id
+
             filtered = df[mask]
+            self.logger.info(filtered.head())
 
             if filtered.empty:
-                self.logger.debug("No messages found for specified chat and topic")
                 return None
 
             return filtered["last_message_id"].max()
 
         except Exception as e:
             self.logger.error(
-                f"Error getting last message ID for chat {chat_id}, topic {topic_id}: {str(e)}"
+                f"Error getting last message ID for {entity_id} from {sheet_name}: {str(e)}"
             )
             return None

@@ -211,3 +211,25 @@ async def get_channel_names(client, channel_list):
             logger.error(f"Error getting name for {mask_channel_link(channel_id)}: {e}")
             names[channel_id] = mask_channel_link(channel_id)
     return names
+
+
+async def check_new_messages(client, channel_id, last_message_id=None):
+    """Check if channel has new messages since last_message_id"""
+    try:
+        # Get the latest message
+        messages = await client.get_messages(channel_id, limit=1)
+        if not messages:
+            return False
+
+        latest_id = messages[0].id
+
+        # If we don't have last_message_id, treat as new messages exist
+        if last_message_id is None:
+            return True
+
+        return latest_id > last_message_id
+    except Exception as e:
+        logger.error(
+            f"Error checking new messages for {mask_channel_link(channel_id)}: {e}"
+        )
+        return True  # On error, better to check full stats

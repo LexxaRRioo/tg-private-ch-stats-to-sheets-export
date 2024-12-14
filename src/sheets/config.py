@@ -1,7 +1,12 @@
 SHEET_CONFIGS = {
     "channels_daily": {
         "key_columns": ["channel_id"],
-        "merge_columns": ["channel_name", "member_count", "messages_count"],
+        "merge_columns": [
+            "channel_name",
+            "member_count",
+            "messages_count",
+            "last_message_id",
+        ],
         "timestamp_column": "processed_at",
     },
     "channel_messages": {

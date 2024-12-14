@@ -9,7 +9,12 @@ from tqdm import tqdm
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from src.config import Config
-from src.telegram.client import get_channel_stats, get_chat_stats, get_channel_names
+from src.telegram.client import (
+    get_channel_stats,
+    get_chat_stats,
+    get_channel_names,
+    check_new_messages,
+)
 from src.sheets.client import SheetStorage
 from src.sheets.config import SHEET_CONFIGS
 from src.cache import load_cache, save_cache
@@ -36,7 +41,7 @@ async def print_welcome_msg(config):
                 get_channel_names(client, config.channels["chats"]), timeout=30
             )
 
-        print("\nrzv_de telegram stats bot")
+        print("\nWelcome to the rzv_de telegram stats bot")
         print("\nChannels:")
         for name in channel_names.values():
             print(f"- {name}")
@@ -59,7 +64,7 @@ async def main():
     PROCESSED_AT = datetime.now(config.timezone)
     storage = SheetStorage(config.credentials_path, config.sheet_url)
 
-    await print_welcome_msg(config)
+    # await print_welcome_msg(config)
     cached_data = load_cache(cache_path)
 
     if cached_data:
@@ -78,30 +83,69 @@ async def main():
 
             manager = TelegramManager(client)
 
-            # Process channels
-            channel_progress = tqdm(
-                config.channels["channels"],
-                desc="Channel",
-                bar_format="Processing channel '{desc}': {bar} | {percentage:3.0f}% | {n_fmt}/{total_fmt}",
-                ncols=100,
-            )
-
-            for channel_id in channel_progress:
+            # Check for new messages in channels
+            should_update_channels = False
+            for channel_id in config.channels["channels"]:
                 try:
-                    channel = await manager.execute_with_retry(
-                        client.get_entity, channel_id, entity=channel_id
+                    # Get last known message ID from storage
+                    last_id = storage.get_last_message_id(
+                        mask_channel_link(channel_id), sheet_name="channels_daily"
                     )
-                    channel_progress.set_description_str(channel.title)
 
-                    stats = await get_channel_stats(client, channel_id, config.timezone)
-                    if stats:
-                        all_stats["channels"].append(stats)
+                    has_new = await check_new_messages(client, channel_id, last_id)
+                    if has_new:
+                        should_update_channels = True
+                        break
 
                 except Exception as e:
                     logger.error(
-                        f"Error processing channel {mask_channel_link(channel_id)}: {str(e)}"
+                        f"Error checking channel {mask_channel_link(channel_id)}: {e}"
                     )
-                    continue
+                    should_update_channels = (
+                        True  # On error, better to check full stats
+                    )
+                    break
+
+            if should_update_channels:
+                logger.info("Found new messages in channels, updating stats...")
+
+                # Process channels
+                channel_progress = tqdm(
+                    config.channels["channels"],
+                    desc="Channel",
+                    bar_format="Processing channel '{desc}': {bar} | {percentage:3.0f}% | {n_fmt}/{total_fmt}",
+                    ncols=100,
+                )
+
+                for channel_id in channel_progress:
+                    try:
+                        last_id = storage.get_last_message_id(
+                            mask_channel_link(channel_id), sheet_name="channels_daily"
+                        )
+
+                        has_new = await check_new_messages(client, channel_id, last_id)
+                        if has_new:
+                            should_update_channels = True
+                            break
+
+                        channel = await manager.execute_with_retry(
+                            client.get_entity, channel_id, entity=channel_id
+                        )
+                        channel_progress.set_description_str(channel.title)
+
+                        stats = await get_channel_stats(
+                            client, channel_id, config.timezone
+                        )
+                        if stats:
+                            all_stats["channels"].append(stats)
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing channel {mask_channel_link(channel_id)}: {str(e)}"
+                        )
+                        continue
+            else:
+                logger.info("No new messages in channels, skipping update")
 
             logger.info(" ")
             logger.info(
@@ -151,6 +195,9 @@ async def main():
             "channel_name": c["channel_name"],
             "member_count": c["member_count"],
             "messages_count": len(c["messages"]),
+            "last_message_id": (
+                max(msg["message_id"] for msg in c["messages"]) if c["messages"] else 0
+            ),
             "processed_at": PROCESSED_AT,
         }
         for c in all_stats["channels"]
