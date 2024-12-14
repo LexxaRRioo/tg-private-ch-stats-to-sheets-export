@@ -91,3 +91,28 @@ class SheetStorage:
             self.logger.warning(f"No data to update in sheet '{sheet_name}'")
 
         self.logger.info(f"Successfully updated '{sheet_name}' \n")
+
+    def get_last_message_id(self, chat_id, topic_id):
+        """Get last message ID for specific chat and topic"""
+        try:
+            worksheet = self.spreadsheet.worksheet("chat_topics_hourly")
+            df = pd.DataFrame(worksheet.get_all_records())
+
+            if df.empty:
+                return None
+
+            # Filter for specific chat and topic
+            mask = (df["chat_id"] == chat_id) & (df["topic_id"] == topic_id)
+            filtered = df[mask]
+
+            if filtered.empty:
+                self.logger.debug("No messages found for specified chat and topic")
+                return None
+
+            return filtered["last_message_id"].max()
+
+        except Exception as e:
+            self.logger.error(
+                f"Error getting last message ID for chat {chat_id}, topic {topic_id}: {str(e)}"
+            )
+            return None

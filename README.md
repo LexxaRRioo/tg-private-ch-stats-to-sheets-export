@@ -14,6 +14,9 @@ Managing multiple Telegram channels and chat communities can be challenging when
 This bot automates the collection of these metrics and presents them in an easy-to-analyze Google Sheets dashboard.
 
 [See what you can get: BI Dashboard](https://datalens.yandex/vhix6u25akgwi)
+![bi chart](image.png)
+
+Last launch: [![TG Stats Collection](https://github.com/LexxaRRioo/tg-stats-dashboard-bot/actions/workflows/stats.yml/badge.svg)](https://github.com/LexxaRRioo/tg-stats-dashboard-bot/actions/workflows/stats.yml)
 
 ## 🚀 Key Features
 
@@ -129,7 +132,7 @@ python -m src.main
 
 Historical data collection:
 ```bash
-MODE=backfill START_DATE=2024-01-01 END_DATE=2024-01-31 python -m src.main
+MODE=backfill python -m src.main
 ```
 
 ### Data Structure

@@ -9,19 +9,6 @@ logger = logging.getLogger(__name__)
 word_normalizer = WordNormalizer()
 
 
-class DateFilter(InputMessagesFilterEmpty):
-    def __init__(self, start_date, end_date):
-        self.start_date = start_date
-        self.end_date = end_date
-
-    def filter(self, message):
-        message_date = message.date
-        if message_date.tzinfo is None:
-            # If message date has no timezone, assume UTC
-            message_date = message_date.replace(tzinfo=pytz.UTC)
-        return self.start_date <= message_date <= self.end_date
-
-
 def clean_text(text):
     """Clean and normalize text for word cloud"""
     if not text:
