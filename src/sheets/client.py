@@ -97,8 +97,6 @@ class SheetStorage:
         try:
             worksheet = self.spreadsheet.worksheet(sheet_name)
             df = pd.DataFrame(worksheet.get_all_records())
-            self.logger.info(df.head())
-            self.logger.info(f"entity is: {entity_id}, sheet_name: {sheet_name}")
 
             if df.empty:
                 return None
@@ -109,7 +107,6 @@ class SheetStorage:
                 mask = df["chat_id"] == entity_id
 
             filtered = df[mask]
-            self.logger.info(filtered.head())
 
             if filtered.empty:
                 return None
