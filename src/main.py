@@ -12,14 +12,30 @@ from src.config import Config
 from src.telegram.client import get_channel_stats, get_chat_stats, get_channel_names
 from src.sheets.client import SheetStorage
 from src.sheets.config import SHEET_CONFIGS
-from src.cache import load_cache, save_cache
+from src.cache import load_cache, save_cache, datetime_handler
+from src.telegram.utils import mask_channel_link
 
 ROOT_DIR = Path(__file__).parent.parent
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    force=True
 )
-logger = logging.getLogger(__name__)
 
+# Modify the logger to use tqdm.write
+class TqdmLoggingHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+# Set up the logger
+logger = logging.getLogger()
+logger.handlers = []  # Remove existing handlers
+logger.addHandler(TqdmLoggingHandler())
 
 async def print_welcome_msg(config):
     try:
@@ -34,7 +50,7 @@ async def print_welcome_msg(config):
                 get_channel_names(client, config.channels["chats"]), timeout=30
             )
 
-        print("\nrzv_de telegram stats bot")
+        print("\nWelcome to the rzv_de telegram stats bot")
         print("\nChannels:")
         for name in channel_names.values():
             print(f"- {name}")
@@ -43,14 +59,7 @@ async def print_welcome_msg(config):
             print(f"- {name}")
 
         safe_config = {"timezone": config.timezone.zone, "mode": config.mode}
-        if config.mode == "backfill":
-            safe_config.update(
-                {
-                    "start_date": config.start_date.strftime("%Y-%m-%d"),
-                    "end_date": config.end_date.strftime("%Y-%m-%d"),
-                }
-            )
-        print("\nConfig:", json.dumps(safe_config, indent=2))
+        print("\nConfig:", json.dumps(safe_config, indent=2, default=datetime_handler, ensure_ascii=False))
 
     except asyncio.TimeoutError:
         logger.error("Timeout collecting names")
@@ -62,7 +71,6 @@ async def main():
     config = Config()
     cache_path = os.path.join(ROOT_DIR, config.cache_file)
     PROCESSED_AT = datetime.now(config.timezone)
-    start_date, end_date = config.get_date_range()
 
     await print_welcome_msg(config)
     cached_data = load_cache(cache_path)
@@ -81,19 +89,34 @@ async def main():
                 "timestamp": datetime.now(pytz.UTC),
             }
 
-            for channel_id in tqdm(
-                config.channels["channels"], desc="Processing channels"
-            ):
+            channel_progress = tqdm(
+                config.channels["channels"],
+                desc="Starting",
+                position=0,
+                leave=True,
+                bar_format="Processing channel '{desc}': {bar} | {percentage:3.0f}% | {n_fmt}/{total_fmt}",
+                ncols=100,
+            )
+
+            for channel_id in channel_progress:
                 await asyncio.sleep(5)
                 stats = await get_channel_stats(client, channel_id, config.timezone)
                 if stats:
+                    channel_progress.set_description(stats["channel_name"])
                     all_stats["channels"].append(stats)
 
-            for chat_id in tqdm(config.channels["chats"], desc="Processing chats"):
+            chat_progress = tqdm(
+                config.channels["chats"],
+                desc="Processing chats",
+                position=0,  # Main progress bar at top
+                ncols=80,
+                leave=True,
+                bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}",
+            )
+
+            for chat_id in chat_progress:
                 await asyncio.sleep(2)
-                stats = await get_chat_stats(
-                    client, chat_id, config.timezone, start_date, end_date
-                )
+                stats = await get_chat_stats(client, chat_id, config.timezone)
                 if stats:
                     all_stats["chats"].append(stats)
 
@@ -117,6 +140,25 @@ async def main():
     storage.merge_data(
         "channels_daily", channels_daily, SHEET_CONFIGS["channels_daily"]
     )
+
+    hashtags_data = []
+    for channel in all_stats["channels"]:
+        for occurrence in channel["hashtag_occurrences"]:
+            hashtags_data.append({
+                "channel_id": channel["channel_id"],
+                "channel_name": channel["channel_name"],
+                "message_id": occurrence["message_id"],
+                "hashtag": occurrence["hashtag"],
+                "date": occurrence["date"],
+                "processed_at": PROCESSED_AT
+            })
+
+    if hashtags_data:
+        storage.merge_data(
+            "hashtags_detailed", 
+            hashtags_data, 
+            SHEET_CONFIGS["hashtags_detailed"]
+        )
 
     messages = []
     for channel in all_stats["channels"]:

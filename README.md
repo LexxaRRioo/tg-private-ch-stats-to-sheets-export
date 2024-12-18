@@ -88,8 +88,6 @@ python -m src.main
 To collect historical data:
 ```bash
 MODE=backfill
-START_DATE=2024-01-01
-END_DATE=2024-01-31
 ```
 
 ## Data Structure

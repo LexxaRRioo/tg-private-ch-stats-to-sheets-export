@@ -3,25 +3,21 @@ import logging
 from datetime import datetime
 import asyncio
 from tqdm import tqdm
-from src.telegram.utils import mask_channel_link, clean_text, DateFilter
+from src.telegram.utils import mask_channel_link, clean_text
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
 
-async def get_messages_by_hour(
-    client, chat, topic_id, timezone, start_date=None, end_date=None
-):
+async def get_messages_by_hour(client, chat, topic_id, topic_title, timezone):
     messages_by_hour = {}
     total_messages = 0
-    message_filter = DateFilter(start_date, end_date) if start_date else None
 
-    logger.info(f"Starting messages collection for topic {topic_id}")
-    async for message in client.iter_messages(
-        chat, reply_to=topic_id, reverse=True, filter=message_filter
-    ):
+    logger.info(f"Starting messages collection for topic '{topic_title}'")
+    async for message in client.iter_messages(chat, reply_to=topic_id, reverse=True):
         total_messages += 1
         if total_messages % 1000 == 0:
-            logger.info(f"Processed {total_messages} messages for topic {topic_id}")
+            logger.info(f"Processed {total_messages} messages for the topic '{topic_title}'")
 
         msg_date = message.date.astimezone(timezone)
         hour = msg_date.replace(minute=0, second=0, microsecond=0)
@@ -39,11 +35,11 @@ async def get_messages_by_hour(
         current["last_id"] = max(current["last_id"], message.id)
         current["first_id"] = min(current["first_id"], message.id)
 
-    logger.info(f"Completed topic {topic_id} with {total_messages} messages")
+    logger.info(f"Completed topic '{topic_title}' with {total_messages} messages")
     return messages_by_hour
 
 
-async def get_chat_stats(client, chat_id, timezone, start_date=None, end_date=None):
+async def get_chat_stats(client, chat_id, timezone):
     max_retries = 3
     for retry in range(max_retries):
         try:
@@ -62,12 +58,21 @@ async def get_chat_stats(client, chat_id, timezone, start_date=None, end_date=No
                 )
             )
 
-            for topic in tqdm(result.topics, desc="Processing topics"):
-                messages = await get_messages_by_hour(
-                    client, chat, topic.id, timezone, start_date, end_date
-                )
-                stats["topics"][topic.id] = {"title": topic.title, "messages": messages}
-                await asyncio.sleep(1)
+            # Main progress bar for topics
+            with tqdm(
+                total=len(result.topics),
+                desc=f"Processing chat '{chat.title}'",
+                position=1,  # Main progress at top
+                leave=False,  # Keep the bar after completion
+                ncols=80
+            ) as pbar:
+                for topic in result.topics:
+                    messages = await get_messages_by_hour(
+                        client, chat, topic.id, topic.title, timezone
+                    )
+                    stats["topics"][topic.id] = {"title": topic.title, "messages": messages}
+                    await asyncio.sleep(1)
+                    pbar.update(1)
 
             return stats
 
@@ -98,20 +103,34 @@ async def get_channel_stats(client, channel_id, timezone):
             stats["member_count"] = participants.total
 
             messages = []
+            hashtag_occurrences = []
+
             async for message in client.iter_messages(channel, limit=100):
                 if message.text:
-                    messages.append(
-                        {
-                            "date": message.date.astimezone(timezone).strftime(
-                                "%Y-%m-%dT%H:%M:%S"
-                            ),
-                            "text": message.text,
-                            "processed_text": clean_text(message.text),
+                    # Extract hashtags from the text
+                    message_hashtags = [word for word in message.text.split() if word.startswith('#')]
+                    msg_date = message.date.astimezone(timezone)
+                    
+                    message_data = {
+                        "date": msg_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "text": message.text,
+                        "processed_text": clean_text(message.text),
+                        "message_id": message.id,
+                        "hashtags": message_hashtags
+                    }
+                    messages.append(message_data)
+                    
+                    # Store each hashtag occurrence separately
+                    for hashtag in message_hashtags:
+                        hashtag_occurrences.append({
                             "message_id": message.id,
-                        }
-                    )
+                            "date": msg_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "hashtag": hashtag
+                        })
 
             stats["messages"] = messages
+            stats["hashtag_occurrences"] = hashtag_occurrences
+
             return stats
 
         except errors.FloodWaitError as e:
