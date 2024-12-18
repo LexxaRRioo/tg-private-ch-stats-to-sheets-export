@@ -4,6 +4,7 @@ import json
 import pytz
 from datetime import datetime
 
+
 class Config:
     def __init__(self):
         load_dotenv()
@@ -16,7 +17,7 @@ class Config:
         self.timezone = pytz.timezone(os.getenv("TIMEZONE", "Europe/Moscow"))
         self.mode = os.getenv("MODE", "regular")
         self.cache_file = "data_cache.json"
-        
+
         if self.mode == "backfill":
             self.start_date = datetime.strptime(os.getenv("START_DATE"), "%Y-%m-%d")
             self.end_date = datetime.strptime(os.getenv("END_DATE"), "%Y-%m-%d")

@@ -5,13 +5,16 @@ import logging
 from datetime import datetime, date
 from gspread.exceptions import WorksheetNotFound
 
+
 class SheetStorage:
     def __init__(self, credentials_path, spreadsheet_url):
         scope = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive",
         ]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name(
+            credentials_path, scope
+        )
         self.client = gspread.authorize(creds)
         self.spreadsheet = self.client.open_by_url(spreadsheet_url)
         self.logger = logging.getLogger(__name__)
@@ -33,7 +36,9 @@ class SheetStorage:
             if pd.api.types.is_datetime64_any_dtype(new_df[col]) or isinstance(
                 new_df[col].iloc[0], (datetime, date)
             ):
-                new_df[col] = pd.to_datetime(new_df[col]).dt.strftime("%Y-%m-%d %H:%M:%S")
+                new_df[col] = pd.to_datetime(new_df[col]).dt.strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 if not existing_data.empty and col in existing_data.columns:
                     existing_data[col] = pd.to_datetime(existing_data[col]).dt.strftime(
                         "%Y-%m-%d %H:%M:%S"

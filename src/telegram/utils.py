@@ -1,6 +1,7 @@
 import re
 from telethon.tl.types import InputMessagesFilterEmpty
 
+
 class DateFilter(InputMessagesFilterEmpty):
     def __init__(self, start_date, end_date):
         self.start_date = start_date
@@ -9,12 +10,14 @@ class DateFilter(InputMessagesFilterEmpty):
     def filter(self, message):
         return self.start_date <= message.date <= self.end_date
 
+
 def clean_text(text):
     """Clean text for word cloud"""
     text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)
     text = re.sub(r"[-*?()\"'\+;\.\,:`<>\#\[\]%\(\)]+|[?!]+$", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip().lower()
+
 
 def mask_channel_link(link):
     """Mask parts of channel link for privacy"""
