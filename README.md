@@ -4,6 +4,8 @@ Ever wondered what's happening in your Telegram channels and chats but got tired
 
 100% Free, hosting included. Made for content creators who use private telegram chats and channels and want to show what's behind the paywall.
 
+[![TG Stats Collection](https://github.com/LexxaRRioo/tg-private-ch-stats-to-sheets-export/actions/workflows/stats.yml/badge.svg?branch=main&event=schedule)](https://github.com/LexxaRRioo/tg-private-ch-stats-to-sheets-export/actions/workflows/stats.yml)
+
 Example (ru) for the https://boosty.to/rzv_de data engineering community. Click the link and try yourself:
 
 ---> [Datalens BI dashboard](https://datalens.yandex/vhix6u25akgwi) <---
