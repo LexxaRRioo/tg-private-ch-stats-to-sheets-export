@@ -28,8 +28,9 @@ class SheetStorage:
     def _convert_dates_to_strings(self, df):
         """Convert all date/datetime columns to strings."""
         for col in df.columns:
-            if pd.api.types.is_datetime64_any_dtype(df[col]) or \
-               (not df.empty and isinstance(df[col].iloc[0], (datetime, date))):
+            if pd.api.types.is_datetime64_any_dtype(df[col]) or (
+                not df.empty and isinstance(df[col].iloc[0], (datetime, date))
+            ):
                 df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%d %H:%M:%S")
         return df
 
@@ -59,7 +60,7 @@ class SheetStorage:
         else:
             # Handle other sheets
             existing_data = pd.DataFrame(sheet.get_all_records())
-            
+
             if not existing_data.empty:
                 # Convert dates in existing data
                 existing_data = self._convert_dates_to_strings(existing_data)
@@ -74,8 +75,10 @@ class SheetStorage:
         sheet.clear()
         # Convert to nested list and ensure all values are strings
         data_to_update = [merged.columns.values.tolist()] + merged.values.tolist()
-        data_to_update = [[str(cell) if isinstance(cell, (date, datetime)) else cell 
-                          for cell in row] for row in data_to_update]
-        
+        data_to_update = [
+            [str(cell) if isinstance(cell, (date, datetime)) else cell for cell in row]
+            for row in data_to_update
+        ]
+
         sheet.update(data_to_update)
         self.logger.info(f"Successfully updated '{sheet_name}' \n")

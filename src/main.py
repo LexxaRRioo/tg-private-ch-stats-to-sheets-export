@@ -17,10 +17,9 @@ from src.telegram.utils import mask_channel_link
 
 ROOT_DIR = Path(__file__).parent.parent
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    force=True
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True
 )
+
 
 # Modify the logger to use tqdm.write
 class TqdmLoggingHandler(logging.Handler):
@@ -32,10 +31,12 @@ class TqdmLoggingHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+
 # Set up the logger
 logger = logging.getLogger()
 logger.handlers = []  # Remove existing handlers
 logger.addHandler(TqdmLoggingHandler())
+
 
 async def print_welcome_msg(config):
     try:
@@ -59,7 +60,12 @@ async def print_welcome_msg(config):
             print(f"- {name}")
 
         safe_config = {"timezone": config.timezone.zone, "mode": config.mode}
-        print("\nConfig:", json.dumps(safe_config, indent=2, default=datetime_handler, ensure_ascii=False))
+        print(
+            "\nConfig:",
+            json.dumps(
+                safe_config, indent=2, default=datetime_handler, ensure_ascii=False
+            ),
+        )
 
     except asyncio.TimeoutError:
         logger.error("Timeout collecting names")
@@ -144,20 +150,20 @@ async def main():
     hashtags_data = []
     for channel in all_stats["channels"]:
         for occurrence in channel["hashtag_occurrences"]:
-            hashtags_data.append({
-                "channel_id": channel["channel_id"],
-                "channel_name": channel["channel_name"],
-                "message_id": occurrence["message_id"],
-                "hashtag": occurrence["hashtag"],
-                "date": occurrence["date"],
-                "processed_at": PROCESSED_AT
-            })
+            hashtags_data.append(
+                {
+                    "channel_id": channel["channel_id"],
+                    "channel_name": channel["channel_name"],
+                    "message_id": occurrence["message_id"],
+                    "hashtag": occurrence["hashtag"],
+                    "date": occurrence["date"],
+                    "processed_at": PROCESSED_AT,
+                }
+            )
 
     if hashtags_data:
         storage.merge_data(
-            "hashtags_detailed", 
-            hashtags_data, 
-            SHEET_CONFIGS["hashtags_detailed"]
+            "hashtags_detailed", hashtags_data, SHEET_CONFIGS["hashtags_detailed"]
         )
 
     messages = []

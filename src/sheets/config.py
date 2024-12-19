@@ -20,7 +20,5 @@ SHEET_CONFIGS = {
         ],
         "timestamp_column": "processed_at",
     },
-    "hashtags_detailed": {
-        "key_columns": ["channel_id", "message_id", "hashtag"]
-    }
+    "hashtags_detailed": {"key_columns": ["channel_id", "message_id", "hashtag"]},
 }

@@ -17,7 +17,9 @@ async def get_messages_by_hour(client, chat, topic_id, topic_title, timezone):
     async for message in client.iter_messages(chat, reply_to=topic_id, reverse=True):
         total_messages += 1
         if total_messages % 1000 == 0:
-            logger.info(f"Processed {total_messages} messages for the topic '{topic_title}'")
+            logger.info(
+                f"Processed {total_messages} messages for the topic '{topic_title}'"
+            )
 
         msg_date = message.date.astimezone(timezone)
         hour = msg_date.replace(minute=0, second=0, microsecond=0)
@@ -64,13 +66,16 @@ async def get_chat_stats(client, chat_id, timezone):
                 desc=f"Processing chat '{chat.title}'",
                 position=1,  # Main progress at top
                 leave=False,  # Keep the bar after completion
-                ncols=80
+                ncols=80,
             ) as pbar:
                 for topic in result.topics:
                     messages = await get_messages_by_hour(
                         client, chat, topic.id, topic.title, timezone
                     )
-                    stats["topics"][topic.id] = {"title": topic.title, "messages": messages}
+                    stats["topics"][topic.id] = {
+                        "title": topic.title,
+                        "messages": messages,
+                    }
                     await asyncio.sleep(1)
                     pbar.update(1)
 
@@ -108,25 +113,29 @@ async def get_channel_stats(client, channel_id, timezone):
             async for message in client.iter_messages(channel, limit=100):
                 if message.text:
                     # Extract hashtags from the text
-                    message_hashtags = [word for word in message.text.split() if word.startswith('#')]
+                    message_hashtags = [
+                        word for word in message.text.split() if word.startswith("#")
+                    ]
                     msg_date = message.date.astimezone(timezone)
-                    
+
                     message_data = {
                         "date": msg_date.strftime("%Y-%m-%dT%H:%M:%S"),
                         "text": message.text,
                         "processed_text": clean_text(message.text),
                         "message_id": message.id,
-                        "hashtags": message_hashtags
+                        "hashtags": message_hashtags,
                     }
                     messages.append(message_data)
-                    
+
                     # Store each hashtag occurrence separately
                     for hashtag in message_hashtags:
-                        hashtag_occurrences.append({
-                            "message_id": message.id,
-                            "date": msg_date.strftime("%Y-%m-%dT%H:%M:%S"),
-                            "hashtag": hashtag
-                        })
+                        hashtag_occurrences.append(
+                            {
+                                "message_id": message.id,
+                                "date": msg_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                                "hashtag": hashtag,
+                            }
+                        )
 
             stats["messages"] = messages
             stats["hashtag_occurrences"] = hashtag_occurrences
